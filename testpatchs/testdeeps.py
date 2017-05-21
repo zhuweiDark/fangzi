@@ -18,7 +18,7 @@ sys.setdefaultencoding( "utf-8" )
 import requests
 
 imageDir = "/Users/zhuwei/房天下/"
-filepath = '/Users/zhuwei/Documents/testpachong/text.txt'
+#filepath = '/Users/zhuwei/Documents/testpachong/text.txt'
 excelFilePath = "/Users/zhuwei/fangtianxia.xls"
 
 #url = "http://www.baidu.com"
