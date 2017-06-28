@@ -17,6 +17,8 @@ import Queue
 import time
 import  threading
 myQueue = Queue.Queue(maxsize= 3)
+myImageDownloadQueue = Queue.Queue(maxsize= 8)
+
 reload(sys)
 sys.setdefaultencoding( "utf-8" )
 
@@ -72,18 +74,28 @@ def writeToSecPreExcelData(allPageContens,indexData) :
 def writeToThirdPreExcelData(allPageContens,indexData) :
     currentThread  = myQueue.get()
     print ('writeToThirdPreExcelData thread  '+ str(indexData)  + threading.current_thread().name +"is running...")
-    # #开始遍历解析每个网页的内容,并且提取出有效的信息
-    # pageIndexValue  = 0
-    # for currentPageUrl  in allPageContens :
-    #     #开始提取每个有用的数据.
-    #     ret = getCurrentPageContentData(currentPageUrl,user_agent,pageIndexValue)
-    #     if ret == -1 :
-    #         continue
-    #     pageIndexValue += 1
+    #开始遍历解析每个网页的内容,并且提取出有效的信息
+    pageIndexValue  = 0
+    for currentPageUrl  in allPageContens :
+       #开始提取每个有用的数据.
+       tmpPageUrl = (currentPageUrl +"/huxing/")
+       ret = getCurrentPageAllImageContentData(tmpPageUrl,currentPageUrl,user_agent,pageIndexValue)
+       if ret == -1 :
+           continue
+       pageIndexValue += 1
 
     myQueue.task_done()
     print ('writeToThirdPreExcelData thread  '+ str(indexData)  + threading.current_thread().name +"is end...")
 
+# 子线程下载一个图片
+def writeToSingleImageData(imageUrlStr,indexI,tempFileDir,user_agent) :
+    currentThread  = myImageDownloadQueue.get()
+    print ('writeToSingleImageData thread  '+ str(indexI)  + threading.current_thread().name +"is running...")
+
+    getSingleImageDownload(imageUrlStr,str(indexI),tempFileDir,user_agent)
+    myImageDownloadQueue.task_done()
+
+    print ('writeToSingleImageData thread  '+ str(indexI)  + threading.current_thread().name +"is end...")
 
 #先获取所有需要爬的目标网页地址
 def getAllDstPageUrlStr(pages):
@@ -168,6 +180,77 @@ def getNodeText(tmpElement,listNode) :
     else:
         listNode.append("")
 
+
+
+def getSingleImageDownload(url,imageTitle,filePathStr,user_agent):
+    print(url)
+    # 开始下载单个图片
+    try:
+        headers = { 'User-Agent' : user_agent ,
+                    'Content-Encoding':'gzip, deflate, sdch',
+                    'Vary':'Accept-Encoding',
+                    'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Connection':'keep-alive'}
+        resText= requests.get(url,headers = headers, timeout=40)
+    except requests.exceptions.RequestException as e:
+        print ("当前图片无法下载 is failed:"+ str(e))
+        return  False
+
+    fileDstPath = filePathStr +"/"+ imageTitle +".jpg"
+    fp = open(fileDstPath,'wb')
+    try:
+        fp.write(resText.content)
+    except Exception as e:
+        print("e:"+ str(e))
+        fp.close()
+        return  False
+    fp.close()
+    return  True
+
+# 提取给定url中的所有图片,并进行下载
+def getCurrentPageAllImageContentData(urlStr,originPageUrl,uaAgent,indexData):
+    print("getCurrentPageAllImageContentData:"+urlStr +"  indexData:"+str(indexData))
+    #开始爬网页内容
+    resultText = pageUrlContent(urlStr,uaAgent)
+    if resultText == None or len(resultText) == 0 :
+        print ("getCurrentPageContentData is failed :" +(urlStr))
+        return -1
+    htmlTree = etree.HTML(resultText)
+    headTitleEleList =  htmlTree.xpath('//*[@class="building-name"]')
+    if headTitleEleList == None or isinstance(headTitleEleList,list)== False \
+            or len(headTitleEleList) ==0 :
+        print("headTitleEleList is notFound!")
+        return  -1
+    titleStr = headTitleEleList[0].text
+    tempFileDir = dstImgFilePath
+    if titleStr != None and len(titleStr) > 0 :
+         tempFileDir = dstImgFilePath + titleStr
+         if (os.path.exists(tempFileDir) == False) :
+             os.mkdir(tempFileDir,)
+
+    imageEleList = htmlTree.xpath('//div[@class="photo-list-area"]/div[@id="photos-list"]/ul/li[@class="showcase-thumbnail"]/a/img')
+    if imageEleList == None or isinstance(imageEleList,list)== False \
+            or len(imageEleList) ==0 :
+        print("imageEleList is notFound!")
+        return  -1
+    #开始下载图片了
+    indexI = 0
+    for imageElement in imageEleList :
+        imageUrlStr = imageElement.get("src")
+        if imageUrlStr!= None and len(imageUrlStr) > 0 :
+
+            imageDownloadThread = threading.Thread(target=writeToSingleImageData,name=("imageDownloadThread" +str(indexI)),args=(imageUrlStr,indexI,tempFileDir,user_agent))
+            imageDownloadThread.setDaemon(True)
+            imageDownloadThread.start()
+            myImageDownloadQueue.put(imageDownloadThread)
+
+        else:
+            print("imageUrlStr is not found!! "+urlStr +indexI)
+        indexI += 1
+
+    myImageDownloadQueue.join()
+
+    return  0
 # 提取给定url 中的详情页有效数据(同时进行写入excel)
 def getCurrentDetailPageContentData(urlStr,originPageUrl,uaAgent,indexData):
     print("getCurrentDetailPageContentData:"+urlStr +"  indexData:"+str(indexData))
@@ -196,7 +279,7 @@ def getCurrentDetailPageContentData(urlStr,originPageUrl,uaAgent,indexData):
     allBottomList = bottomElent.xpath('.//*[@id="peitaodetailTable"]/tr')
     if allBottomList == None or isinstance(allBottomList,list)== False \
             or len(allBottomList) ==0 :
-        print("allHeadEleList is notFound!")
+        print("allBottomList is notFound!")
         return  -1
     #先忽略内部配套信息
     for i in range(0,7):
@@ -306,7 +389,7 @@ def getCurrentPageContentData(urlStr,uaAgent,indexData) :
     headLeftEleList = htmlTree.xpath('/html/body/div[@class="container b-name-area"]/div[@class="row"]')
     if headLeftEleList == None or isinstance(headLeftEleList,list)== False \
             or len(headLeftEleList) ==0 :
-        print("contentEle is notFound!")
+        print("headLeftEleList is notFound!")
         return  -1
 
     headLeftEle = headLeftEleList[0]
@@ -315,16 +398,16 @@ def getCurrentPageContentData(urlStr,uaAgent,indexData) :
     tmpTitle = currentContentsNode[0]
 
     #销售状态
-    saleStatusElement =  headLeftEle.xpath('.//*[@class="house-status"]/span[@class="label label-success"]/em[@class="icon-list"]')
+    saleStatusElement =  headLeftEle.xpath('.//*[@class="house-status"]/*/em[@class="icon-list"]')
     getNodeNextText(saleStatusElement,currentContentsNode)
     tmpSaleStatus = currentContentsNode[1]
 
-    #标签类元素
+    #标签类元素(不是必须需要的!有可能没有的情况)
     headBottomEle = htmlTree.xpath('/html/body/div[@class="container b-tag-area clearfix"]/div[@class="row"]/span[@class="b-tag"]')
     if headBottomEle == None or isinstance(headBottomEle,list)== False \
             or len(headBottomEle) ==0 :
         print("headBottomEle is notFound!")
-        return  -1
+
     tmpTitleTag = ""
     for i in range(0,len(headBottomEle)):
         tmpText = headBottomEle[i].text
@@ -337,6 +420,8 @@ def getCurrentPageContentData(urlStr,uaAgent,indexData) :
 
     if len(tmpTitleTag) >0 :
         currentContentsNode.append(tmpTitleTag)
+    else :
+        currentContentsNode.append("".encode("utf-8"))
 
     #正文body element
     bodyContentEle = htmlTree.xpath('/html/body/div[7]/div/div[2]')
@@ -350,7 +435,7 @@ def getCurrentPageContentData(urlStr,uaAgent,indexData) :
     priceElement =  tmpBodyContentEle.xpath('.//*[@class="col-sm-7 col-xs-12 col-IE-7"]/span[@class="text-red price"]')
     if priceElement == None or isinstance(priceElement,list)== False \
             or len(priceElement) ==0 :
-        print("bodyContentEle is notFound!")
+        print("priceElement is notFound!")
         return  -1
     priceText =  priceElement[0].text.encode("utf-8")
     if priceElement[0].tail != None and len(priceElement[0].tail) > 0 :
@@ -361,7 +446,7 @@ def getCurrentPageContentData(urlStr,uaAgent,indexData) :
     salePhoneNumEle = tmpBodyContentEle.xpath('.//*[@class="row info-line z1"]/div[@class="col-sm-10 col-xs-12 col-IE-12"]/span[@class="text-red Hotline"]')
     if salePhoneNumEle == None or isinstance(salePhoneNumEle,list)== False \
             or len(salePhoneNumEle) ==0 :
-        print("bodyContentEle is notFound!")
+        print("salePhoneNumEle is notFound!")
         return  -1
     salePhoneText = ""
     for i in range(0,len(salePhoneNumEle)):
